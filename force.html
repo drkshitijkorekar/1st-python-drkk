@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Force-Directed Graph with Controls</title>
+    <script src="https://d3js.org/d3.v5.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f0f0f0;
+            margin: 20px;
+        }
+
+        h1 {
+            text-align: center;
+        }
+
+        .link {
+            stroke: #999;
+            stroke-opacity: 0.6;
+            stroke-width: 1.5px;
+        }
+
+        .node circle {
+            stroke: #fff;
+            stroke-width: 2px;
+        }
+
+        .node text {
+            font: 12px sans-serif;
+            pointer-events: none;
+            fill: #333;
+        }
+
+        .tooltip {
+            position: absolute;
+            text-align: center;
+            width: auto;
+            height: auto;
+            padding: 4px;
+            font: 12px sans-serif;
+            background: lightsteelblue;
+            border: 0px;
+            border-radius: 8px;
+            pointer-events: none;
+        }
+
+        /* Button panel styling */
+        .control-panel {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background-color: #fff;
+            border: 1px solid #ccc;
+            padding: 10px;
+            border-radius: 5px;
+            box-shadow: 0px 0px 5px rgba(0, 0, 0, 0.2);
+        }
+
+        .control-panel button {
+            display: block;
+            margin: 5px 0;
+            padding: 5px 10px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Visualization of Crawled Pages</h1>
+    <div id="info"></div>
+    <svg width="1200" height="800"></svg>  <!-- Made the SVG bigger -->
+
+    <!-- Control panel for moving and zooming the graph -->
+    <div class="control-panel">
+        <button id="up">Up</button>
+        <button id="down">Down</button>
+        <button id="left">Left</button>
+        <button id="right">Right</button>
+        <button id="zoomIn">Zoom In</button>
+        <button id="zoomOut">Zoom Out</button>
+    </div>
+
+    <!-- Load the spider.js file -->
+    <script src="spider.js"></script>
+
+    <script>
+        if (typeof spiderJson === 'undefined') {
+            alert("Error: spiderJson is not defined. Please ensure spider.js is loaded correctly.");
+        } else {
+            var json = spiderJson;
+
+            // Display information about the starting URL and page count
+            document.getElementById('info').innerHTML = 
+                'Starting URL: <strong>' + json.starting_url + '</strong><br>' + 
+                'Number of Nodes: <strong>' + json.url_count + '</strong>';
+
+            var width = 1200,
+                height = 800;
+
+            // Set up the color scale for nodes (10 different colors)
+            var color = d3.scaleOrdinal(d3.schemeCategory10);
+
+            var svg = d3.select("svg");
+
+            // Add a container group to enable zooming and panning
+            var container = svg.append("g");
+
+            var simulation = d3.forceSimulation()
+                .force("link", d3.forceLink().distance(80).strength(1))
+                .force("charge", d3.forceManyBody().strength(-300)) // Negative value to push nodes apart
+                .force("center", d3.forceCenter(width / 2, height / 2));
+
+            var tooltip = d3.select("body").append("div")
+                .attr("class", "tooltip")
+                .style("opacity", 0);
+
+            // Variables for controlling position and scale of the graph
+            var currentTransform = d3.zoomIdentity;
+            var moveAmount = 50; // Number of pixels to move when clicking move buttons
+            var zoomFactor = 1.2; // Zoom scale factor for zoom buttons
+
+            // Apply zoom and drag behaviors to the SVG container
+            var zoom = d3.zoom()
+                .scaleExtent([0.1, 10]) // Allow zoom in/out
+                .on("zoom", function(event) {
+                    currentTransform = event.transform;
+                    container.attr("transform", currentTransform); // Enable panning and zooming
+                });
+
+            svg.call(zoom);
+
+            var link = container.append("g")
+                .attr("class", "links")
+                .selectAll(".link");
+
+            var node = container.append("g")
+                .attr("class", "nodes")
+                .selectAll(".node");
+
+            // Prepare nodes and links
+            var nodes = json.nodes;
+            var links = json.links;
+
+            // Create links
+            link = link.data(links)
+                .enter().append("line")
+                .attr("class", "link");
+
+            // Create nodes
+            node = node.data(nodes)
+                .enter().append("g")
+                .attr("class", "node")
+                .attr("id", function(d) { return d.id; })
+                .on("mouseover", function(event, d) {
+                    tooltip.transition().duration(200).style("opacity", .9);
+                    tooltip.html("ID: " + d.id + "<br>URL: <a href='" + d.url + "' target='_blank'>" + d.url + "</a>")
+                        .style("left", (event.pageX + 5) + "px")
+                        .style("top", (event.pageY - 28) + "px");
+                })
+                .on("mouseout", function(d) {
+                    tooltip.transition().duration(500).style("opacity", 0);
+                })
+                .on("click", function(event, d) {
+                    // Open the URL in a new tab
+                    if (d.url) {
+                        window.open(d.url, '_blank');
+                    } else {
+                        console.error("URL is undefined for this node.");
+                    }
+                })
+                .call(d3.drag()  // Enable dragging of nodes
+                    .on("start", dragStarted)
+                    .on("drag", dragged)
+                    .on("end", dragEnded));
+
+            // Append circles with random colors
+            node.append("circle")
+                .attr("r", function(d) { return Math.sqrt(d.rank) * 5; }) // Adjust radius based on rank
+                .attr("fill", function(d, i) { return color(i); })  // Assign color
+                .attr("stroke", "steelblue");
+
+            // Append text labels
+            node.append("text")
+                .attr("dy", 3)
+                .attr("x", 6)
+                .text(function(d) { return d.id; });
+
+            // Run the simulation
+            simulation
+                .nodes(nodes)
+                .on("tick", ticked);
+
+            simulation.force("link").links(links);
+
+            function ticked() {
+                link.attr("x1", function(d) { return d.source.x; })
+                    .attr("y1", function(d) { return d.source.y; })
+                    .attr("x2", function(d) { return d.target.x; })
+                    .attr("y2", function(d) { return d.target.y; });
+
+                node.attr("transform", function(d) {
+                    return "translate(" + d.x + "," + d.y + ")";
+                });
+            }
+
+            // Dragging functions
+            function dragStarted(event, d) {
+                if (!event.active) simulation.alphaTarget(0.3).restart();
+                d.fx = d.x;
+                d.fy = d.y;
+            }
+
+            function dragged(event, d) {
+                d.fx = event.x;
+                d.fy = event.y;
+            }
+
+            function dragEnded(event, d) {
+                if (!event.active) simulation.alphaTarget(0);
+                d.fx = null;
+                d.fy = null;
+            }
+
+            // Event listeners for buttons to move and zoom the graph
+            document.getElementById("up").addEventListener("click", function() {
+                currentTransform.y -= moveAmount;  // Move up should decrease y
+                applyTransform();
+            });
+
+            document.getElementById("down").addEventListener("click", function() {
+                currentTransform.y += moveAmount;  // Move down should increase y
+                applyTransform();
+            });
+
+            document.getElementById("left").addEventListener("click", function() {
+                currentTransform.x -= moveAmount;  // Move left should decrease x
+                applyTransform();
+            });
+
+            document.getElementById("right").addEventListener("click", function() {
+                currentTransform.x += moveAmount;  // Move right should increase x
+                applyTransform();
+            });
+
+            document.getElementById("zoomIn").addEventListener("click", function() {
+                currentTransform.k *= zoomFactor;
+                applyTransform();
+            });
+
+            document.getElementById("zoomOut").addEventListener("click", function() {
+                currentTransform.k /= zoomFactor;
+                applyTransform();
+            });
+
+            // Function to apply the current transform (for zoom and pan)
+            function applyTransform() {
+                container.attr("transform", currentTransform);  // Apply the transform directly to the container
+            }
+        }
+    </script>
+</body>
+</html>
